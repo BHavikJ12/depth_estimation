@@ -98,7 +98,25 @@ built for x86_64 and will not run on the Pi's ARM at all.
 > venv. Build the venv without that flag and `import hailo_platform` fails with
 > no obvious reason. It is harmless on the CPU-only path, so use it either way.
 
-Set the key and check it runs:
+### The model weights
+
+The CPU path needs the ~7 MB ONNX, and there are two ways to get it onto the Pi:
+
+```bash
+# A. let it download itself on first run (needs a key and internet, once)
+echo 'export ROBOFLOW_API_KEY=xxxxxxxx' >> ~/.bashrc && source ~/.bashrc
+
+# B. or copy the cache from a machine that has already run it — no key needed
+#    on the laptop:
+tar czf roboflow-cache.tar.gz -C ~/.cache roboflow-onnx
+scp roboflow-cache.tar.gz pi@raspberrypi.local:~/
+#    on the Pi:
+tar xzf roboflow-cache.tar.gz -C ~/.cache
+```
+
+With the cache in place the Pi runs fully offline and never asks for a key.
+
+Check it runs:
 
 ```bash
 echo 'export ROBOFLOW_API_KEY=xxxxxxxx' >> ~/.bashrc && source ~/.bashrc

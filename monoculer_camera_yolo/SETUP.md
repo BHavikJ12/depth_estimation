@@ -78,7 +78,8 @@ tar xzf depth_estimation.tar.gz && cd depth_estimation/monoculer_camera_yolo
 ```
 
 You will still need pip packages and the model weights; section 4 covers moving
-the weights cache, and `pip download -r requirements.txt` builds a wheel bundle.
+the weights cache (which then needs no key at all), and
+`pip download -r requirements.txt` builds a wheel bundle.
 
 ### What should have arrived
 

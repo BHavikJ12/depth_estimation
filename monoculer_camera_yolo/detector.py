@@ -142,7 +142,9 @@ class DroneDetector:
             self.api_key = None
             self._init_ultralytics()
         elif backend == "onnx":
-            self.api_key = resolve_api_key(api_key)
+            # Not resolve_api_key(): a cached model needs no key, and demanding
+            # one here would break running offline from a copied cache.
+            self.api_key = api_key or os.environ.get("ROBOFLOW_API_KEY", "")
             self._init_onnx()
         elif backend == "local":
             self.api_key = resolve_api_key(api_key)
