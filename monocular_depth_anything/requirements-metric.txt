@@ -1,0 +1,6 @@
+# Optional: the V2-Metric models, which output real metres with no anchoring.
+# Large -- torch is ~2.5 GB -- and only worth it if `--scale ground` does not
+# suit the deployment (no visible floor, or an unknown camera height).
+#   PIP_CONFIG_FILE=/dev/null ./venv/bin/pip install -r requirements-metric.txt
+torch>=2.2
+transformers>=4.45

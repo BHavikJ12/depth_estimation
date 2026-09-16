@@ -1,0 +1,6 @@
+# Common dependencies, on every platform. The ONNX Runtime itself is chosen
+# per-machine -- see requirements-gpu.txt / requirements-cpu.txt, or just run
+# ./setup.sh, which picks for you.
+opencv-contrib-python>=4.8
+numpy>=1.24
+huggingface-hub>=0.23

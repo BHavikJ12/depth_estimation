@@ -1,0 +1,7 @@
+# NVIDIA GPU. Linux x86_64 and Windows x64 only -- ONNX Runtime publishes no
+# GPU wheels for macOS or for ARM (Jetson, Raspberry Pi, Apple Silicon).
+#
+# The [cuda,cudnn] extras pull the CUDA 12 / cuDNN 9 runtime as pip wheels, so
+# the system CUDA toolkit does not have to match -- only the NVIDIA driver has
+# to be recent enough (>= 525). Costs about 3 GB.
+onnxruntime-gpu[cuda,cudnn]>=1.19

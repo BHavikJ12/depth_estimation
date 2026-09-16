@@ -1,0 +1,6 @@
+venv/
+models/
+captures/
+__pycache__/
+*.pyc
+selftest_hud.png

@@ -1,0 +1,8 @@
+opencv-contrib-python>=4.8
+numpy>=1.24
+
+# HITNET stereo matching (stereo/hitnet.py, live_depth_hitnet.py).
+# The [cuda,cudnn] extras pull the CUDA 12 / cuDNN 9 runtime as pip wheels,
+# so the system CUDA 11.8 toolkit does not have to match. Swap for plain
+# `onnxruntime` if you have no NVIDIA GPU.
+onnxruntime-gpu[cuda,cudnn]>=1.19

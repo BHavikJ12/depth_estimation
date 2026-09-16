@@ -1,0 +1,9 @@
+# Core.
+opencv-contrib-python>=4.8
+numpy>=1.24
+requests>=2.31
+
+# The default --backend onnx runs the model's weights locally. Swap for
+# onnxruntime-gpu if the CPU stops keeping up; it is a drop-in replacement and
+# onnx_model.py picks up CUDAExecutionProvider automatically when present.
+onnxruntime>=1.17

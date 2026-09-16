@@ -1,0 +1,4 @@
+# No NVIDIA GPU: macOS, ARM, or any machine without CUDA. Everything works and
+# gives the same answers; measured at 3.6 fps at the default resolution and
+# 11.5 fps at --res 252, against 19 and 50 on a GTX 1650. See SETUP.md.
+onnxruntime>=1.17
