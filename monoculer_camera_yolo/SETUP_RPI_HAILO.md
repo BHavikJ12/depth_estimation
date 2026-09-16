@@ -8,6 +8,10 @@ installing a package: the model has to be recompiled on a separate x86 machine
 before the Pi can run it at all, and there is a CPU-only fallback that may be
 good enough.
 
+This doc is the setup steps only. For the *why* behind the non-obvious ones —
+what actually broke during compiling and running this on real hardware, and
+how it was fixed — see [KNOWN_BUGS.md](KNOWN_BUGS.md).
+
 ---
 
 ## 0. What you are signing up for
@@ -233,14 +237,13 @@ hailomz compile yolov5s \
     --classes 3
 ```
 
-Three real problems showed up compiling the actual Roboflow export, in order:
+Three problems showed up compiling the actual Roboflow export against Model
+Zoo 5.4.0 — the *why* for each is in
+[KNOWN_BUGS.md](KNOWN_BUGS.md#compiling-three-packagingconfig-problems-in-model-zoo-540),
+here's just what to run.
 
-**a) Dynamic input shape.** The ONNX reports its input as
-`[batch, 3, height, width]` with every dim dynamic, and parsing fails with
-`Could not parse the model due to dynamic shapes`. The `--tensor-shapes` flag
-the error message suggests does not exist on `hailomz compile` in this
-version (`unrecognized arguments`). Fix it on the ONNX itself first, with
-`onnxsim` (already installed as a DFC dependency):
+**a) Dynamic input shape** — fix it on the ONNX first, with `onnxsim`
+(already installed as a DFC dependency):
 
 ```bash
 onnxsim ~/.cache/roboflow-onnx/drone-detection-rchy7--8/weights.onnx \
@@ -250,17 +253,8 @@ onnxsim ~/.cache/roboflow-onnx/drone-detection-rchy7--8/weights.onnx \
 
 Use `/tmp/weights_fixed.onnx` as `--ckpt` from here on, not the original file.
 
-**b) Missing NMS config file in the wheel.** Compiling then fails later, during
-`_handle_classes_argument`, with:
-
-```
-FileNotFoundError: .../hailo_model_zoo/cfg/postprocess_config/yolov5s_nms_config.json
-```
-
-That whole directory is absent from the `hailo_model_zoo-5.4.0` wheel — a
-packaging gap, not something you did wrong. Pull the file from the matching
-GitHub release tag instead of guessing its contents (it encodes real anchor
-box values, wrong ones silently produce bad boxes, not an error):
+**b) Missing NMS config file in the wheel** — pull it from the matching
+GitHub release tag:
 
 ```bash
 PKGDIR=$(python -c "import hailo_model_zoo, os; print(os.path.dirname(hailo_model_zoo.__file__))")
@@ -269,20 +263,10 @@ gh api "repos/hailo-ai/hailo_model_zoo/contents/hailo_model_zoo/cfg/postprocess_
     --jq '.content' | base64 -d > "$PKGDIR/cfg/postprocess_config/yolov5s_nms_config.json"
 ```
 
-Match `?ref=` to whatever `hailomz --version` actually reports, not always
-`v5.4.0`.
+Match `?ref=` to whatever `hailomz --version` actually reports.
 
-**c) Detection-head layer names don't match.** Compiling then fails with:
-
-```
-HailoNNException: The layer named conv63 doesn't exist in the HN
-```
-
-The config's `bbox_decoders` hardcode the reference `yolov5s`'s internal layer
-names (`conv55`/`conv63`/`conv70`) for its three detection heads. Our model is
-narrower (fewer parameters than the reference `yolov5s`), so its equivalent
-heads land at different indices. Find the real ones from the `.har` that
-`hailomz compile` saves on its first (failing) attempt:
+**c) Detection-head layer names don't match** — find the real ones from the
+`.har` `hailomz compile` saves even on a failing attempt:
 
 ```bash
 source ~/hailo-dfc/bin/activate
@@ -294,9 +278,8 @@ print("real output layers:", [l.name for l in hn.get_real_output_layers()])
 EOF
 ```
 
-That printed `conv47`, `conv54`, `conv60` here, in the same stride-8/16/32
-order the reference names filled — the anchor `w`/`h` values stay the same,
-only the `encoded_layer` field per decoder changes:
+That printed `conv47`, `conv54`, `conv60` here — patch the config's
+`encoded_layer` fields to match (anchors stay the same):
 
 ```bash
 python - <<EOF
@@ -444,53 +427,27 @@ not, either use a USB camera or bridge the CSI camera to V4L2 with
 
 ## 6. Honest status of this backend
 
-**Update: run against real Hailo-8 hardware (AI HAT+, HailoRT 4.23.0).** A HEF
-compiled by the route in section 3 does load and run. One real bug turned up
-in the process, now fixed:
+Run against real Hailo-8 hardware (AI HAT+, HailoRT 4.23.0): HEF loading,
+network group configuration/activation, and live inference all confirmed
+working. Two activation-order/lifecycle bugs turned up getting there and are
+now fixed — see
+[KNOWN_BUGS.md](KNOWN_BUGS.md#the-hailo-backend-itself-two-activation-bugs)
+for what they were; if you hit `HailoRTNetworkGroupNotActivatedException` on
+a version of this code older than that fix, that's it.
 
-Two bugs turned up, both in `_ensure_open`/`close`, both now fixed:
-
-1. `_ensure_open` created and entered the `InferVStreams` pipeline *before*
-   activating the network group. HailoRT requires the opposite order — the
-   network group must be active before an inference pipeline is built on top
-   of it. `close()` had the matching bug in reverse (deactivating before
-   closing the pipeline that was still using it).
-2. Fixing the order alone did not fix the symptom. The line
-   `self._activated = self.network_group.activate(self.ng_params).__enter__()`
-   chains everything into one expression, keeping only what `__enter__()`
-   returns — not the context-manager object itself, which is what actually
-   holds the "network group is active" state via RAII. Hailo's own official
-   example never binds this specific `with` to a name at all, which is the
-   tell: `__enter__()` here returns nothing useful, so the real handle had no
-   references left the instant that line finished, and Python's
-   reference-counted GC could free it — deactivating the network group —
-   before any inference ran. The fix keeps the handle itself in
-   `self._activation_cm` and calls `__enter__()`/`__exit__()` on *that*,
-   separately from whatever it returns.
-
-Both together produced the same symptom: every inference call raising
-`HailoRTNetworkGroupNotActivatedException` / `HAILO_NETWORK_GROUP_NOT_ACTIVATED(69)`
-immediately. If you hit this and the ordering already looks right, check for
-bug 2 specifically — it is the less obvious of the pair.
-
-What is now verified against real hardware: HEF loading, network group
-configuration and activation, and running a live inference call without the
-HailoRT calls themselves raising. What is **still not verified**: the actual
-output format and box positions. Section 3's `bbox_decoders` fix used the
-stock COCO anchor values (see the layer-name-mismatch note in section 3.4) —
-those weren't checked against this specific trained model's real anchors,
-which auto-anchor training can shift away from the defaults. Before trusting
-any range/position number this backend reports, compare its boxes against the
+**Still not verified:** the actual output format and box positions. The
+`bbox_decoders` fix in section 3.4(c) used stock COCO anchor values, not ones
+checked against this specific trained model's real anchors, which
+auto-anchor training can shift away from the defaults. Before trusting any
+range/position number this backend reports, compare its boxes against the
 same footage run through `--backend onnx` (known-good) and look for a
-systematic offset or scale error — that would point at the anchor values,
-not a code bug.
+systematic offset or scale error — that would point at the anchors, not a
+code bug.
 
-What *was already* verified offline in `selftest.py`, before hardware access:
-
-* the NMS output format unpacks to the right frame pixels, class index and score
-* the confidence threshold is applied
-* an NMS output is told apart from a raw tensor output
-* empty classes do not crash it
+What *was* verified offline in `selftest.py`, before hardware access: the
+NMS output format unpacks to the right frame pixels/class/score, the
+confidence threshold is applied, an NMS output is told apart from a raw
+tensor output, and empty classes don't crash it.
 
 ---
 
@@ -512,43 +469,26 @@ What *was already* verified offline in `selftest.py`, before hardware access:
 | output video plays black | `sudo apt install ffmpeg`; without it the writer falls back to MPEG-4 Part 2 |
 | detections look wrong, not absent | not an install problem — see "What this model actually does, measured" in [README.md](README.md) |
 | `HailoRTNetworkGroupNotActivatedException` | see section 6 — two distinct bugs produce this, ordering and a discarded context-manager handle |
-| web stream frozen but `ssh` into the Pi still works fine | the camera read stalled, not the server — see section 8.3 |
-| web stream degrades / stops responding after hours, `ssh` also fine | stuck viewer threads from before the section 8.1 fix — confirm `timeout = 10` is actually in the deployed `web_stream.py` |
+| web stream frozen but `ssh` into the Pi still works fine | the camera read stalled, not the server — see [KNOWN_BUGS.md](KNOWN_BUGS.md#the-camera-read-can-freeze-the-whole-pipeline) |
+| web stream degrades / stops responding after hours, `ssh` also fine | stuck viewer threads — confirm `timeout = 10` is actually in the deployed `web_stream.py`, see [KNOWN_BUGS.md](KNOWN_BUGS.md#the-web-viewers-thread-leak) |
 | `ssh` itself also stops responding | the Pi or the network dropped, not the app — check the router/hotspot and the Pi's power supply before the code |
 
 ---
 
-## 8. Running it unattended: a service, a web viewer, and what breaks over hours
+## 8. Running it unattended: a service and a web viewer
 
-A one-off `run.py` invocation in a terminal is fine for testing, but three
-things are needed for it to run unattended (a systemd service, a way to see
-the feed without a display, and enough robustness to survive hours, not
-minutes) and each one surfaced its own real bug.
+### 8.1 View the feed over the network
 
-### 8.1 View the feed over the network instead of `cv2.imshow`
-
-`--web-port PORT` (in `run.py`) starts a small MJPEG HTTP server and pushes
-every annotated frame to it — open `http://<pi-ip>:PORT/` from any browser on
-the same network, no player needed. `cv2.imshow`/`waitKey` have been removed
-from `run.py` entirely (there is no display code path left to hang or need an
-X server for), so this is the only way to view the feed now; `--no-display`
-and `--step` remain accepted for backward compatibility but do nothing.
+`--web-port PORT` starts a small MJPEG HTTP server and pushes every
+annotated frame to it — open `http://<pi-ip>:PORT/` from any browser on the
+same network, no player needed. This is the only way to view the feed now;
+`cv2.imshow` has been removed from `run.py` (nothing to hang or need an X
+server for), and `--no-display`/`--step` are accepted but do nothing.
 
 ```bash
 ./venv/bin/python run.py --source 0 --backend hailo --weights drone.hef \
     --keep-classes 1 --conf 0.40 --hfov 70 --web-port 8000
 ```
-
-**The bug this had:** the per-viewer connection handler had no socket
-timeout. A stalled client (locked phone screen, dropped wifi that never sends
-a clean TCP close) left `wfile.write()` blocked *forever* — that thread never
-exited. Every stall left one more stuck thread behind; over hours these
-accumulate and exhaust the Pi's memory. Fixed with a 10-second handler
-timeout ([web_stream.py](web_stream.py)); a stalled connection now gets
-cleaned up instead of hanging its thread indefinitely. This is a genuine
-"works for a while, degrades after some time" failure mode — if the stream
-stops responding after hours, check this file's `timeout` is actually in the
-deployed copy before looking elsewhere.
 
 ### 8.2 A systemd service
 
@@ -566,36 +506,16 @@ journalctl -u drone-detect.service -f          # follow it live
 also means a crash loop (bad `.hef`, camera never appearing) will show as
 repeated short-lived PIDs in `journalctl`, not a single clean failure message.
 
-### 8.3 The camera read itself can hang the whole pipeline
+### 8.3 What breaks specifically over hours, not minutes
 
-`cv2.VideoCapture.read()` has no timeout. If the AR0144's USB connection
-hiccups — a real failure mode on a long unattended run, not hypothetical —
-that call can block forever, and since it sat directly in `run.py`'s main
-loop, the *entire* pipeline froze with it: no new detections, and no new
-frames reaching the web stream either, while the process itself stayed alive
-and `ssh` kept working fine. That combination — reachable over SSH,
-completely unresponsive otherwise — is the signature of this bug specifically,
-as opposed to 8.1's thread leak (which shows as climbing memory/thread count)
-or a genuine network/router problem (which takes SSH down too).
-
-Fixed in [sources.py](sources.py): the camera is now read on its own thread
-into a 1-slot queue; the main loop waits on that queue with an 8-second
-timeout (`CAMERA_STALL_TIMEOUT_S`) instead of on the raw read. No frame in
-time reopens the camera from scratch. The old stuck thread is abandoned, not
-killed — there is no safe way to interrupt a blocked C call from Python — and
-is left to exit on its own if the read ever returns.
-
-### 8.4 Two more long-run-only fixes, lower stakes
-
-* [tracker.py](tracker.py): the Kalman filter's covariance matrix is now
-  re-symmetrized after every update. Floating-point drift can slowly make it
-  numerically non-symmetric over a very long run; this is standard defensive
-  practice for a filter meant to run for hours, not a fix for an observed
-  crash.
-* [video_writer.py](video_writer.py): `release()` now catches
-  `subprocess.TimeoutExpired` from a hung ffmpeg and kills it, instead of
-  raising out of `run.py`'s `finally` block and skipping the CSV file close
-  that comes after it. Only matters with `--save` for video output.
+A quick terminal test doesn't exercise any of this. Three bugs only showed up
+running unattended for real — a web-viewer thread leak, a camera read with no
+timeout that could freeze the whole pipeline, and two lower-stakes
+long-run-only fixes in the tracker and video writer. All fixed; the *why* for
+each, plus the exact failure signature to recognize if you're debugging a
+hang, is in
+[KNOWN_BUGS.md](KNOWN_BUGS.md#running-unattended-three-bugs-that-only-show-up-over-hours) —
+worth reading before assuming a new hang is something else entirely.
 
 ---
 

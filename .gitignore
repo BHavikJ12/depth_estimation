@@ -33,6 +33,11 @@ selftest_hud.png
 selftest_pipeline.png
 *_track.csv
 *_out.mp4
+*.log
+
+# ---- Hailo compile artifacts --------------------------------------------
+# Rebuilt from the ONNX weights on an x86_64 machine; see SETUP_RPI_HAILO.md.
+*.har
 
 # ---- third-party repositories ------------------------------------------
 # Upstream projects, cloned separately. Clone commands are in README.md;
