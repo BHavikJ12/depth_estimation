@@ -138,6 +138,10 @@ def main(argv=None):
                           "OpenCV's own, which some players render black")
     out.add_argument("--no-display", action="store_true", help="headless")
     out.add_argument("--quiet", action="store_true", help="no per-frame console output")
+    out.add_argument("--web-port", type=int, default=0,
+                     help="serve the annotated feed as MJPEG on this port; open "
+                          "http://<this-device-ip>:PORT/ from any device on the "
+                          "same network (0 = disabled)")
 
     args = p.parse_args(argv)
 
@@ -211,6 +215,12 @@ def main(argv=None):
         save_dir = Path(args.save)
         save_dir.mkdir(parents=True, exist_ok=True)
 
+    web_broadcaster = None
+    if args.web_port:
+        from web_stream import start_server
+        _, web_broadcaster = start_server(args.web_port)
+        print(f"web stream: http://<this-device-ip>:{args.web_port}/")
+
     frame_idx = 0
     t_start = time.time()
     fps = 0.0
@@ -226,6 +236,9 @@ def main(argv=None):
 
             annotate(frame, tracks, locked, camera,
                      status_lines(detector, camera, estimator, fps, len(tracks), locked))
+
+            if web_broadcaster is not None:
+                web_broadcaster.update(frame)
 
             if csv_writer:
                 # A recorded clip's own timeline, so the log is replayable;
@@ -263,12 +276,6 @@ def main(argv=None):
                       f"az {e.azimuth_deg:+6.2f} el {e.elevation_deg:+6.2f}  "
                       f"span {e.span_px:5.1f}px")
 
-            if not args.no_display:
-                cv.imshow("monocular drone range", frame)
-                wait = 0 if (args.step or source.is_single_image) else 1
-                if cv.waitKey(wait) & 0xFF in (27, ord("q")):
-                    break
-
             frame_idx += 1
             if args.max_frames and frame_idx >= args.max_frames:
                 break
@@ -278,8 +285,6 @@ def main(argv=None):
             writer.release()
         if csv_file is not None:
             csv_file.close()
-        if not args.no_display:
-            cv.destroyAllWindows()
 
     print(f"\n{frame_idx} frame(s) in {time.time() - t_start:.1f}s")
     if args.save:

@@ -87,6 +87,10 @@ class Track:
         K = self.P @ H.T @ np.linalg.inv(S)
         self.x = self.x + K @ y
         self.P = (np.eye(6) - K @ H) @ self.P
+        # Floating-point drift can slowly make P numerically non-symmetric
+        # over a long unattended run; re-symmetrize after every update so it
+        # stays a valid covariance matrix indefinitely.
+        self.P = (self.P + self.P.T) / 2.0
 
         if h > 0:
             self.aspect = 0.7 * self.aspect + 0.3 * (w / h)

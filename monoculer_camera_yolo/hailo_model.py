@@ -62,15 +62,23 @@ class HailoDetectionModel:
         self.out_params = OutputVStreamParams.make(self.network_group,
                                                    format_type=FormatType.FLOAT32)
         self._pipeline = None
-        self._activated = None
+        self._activation_cm = None
 
     # ---- lifecycle ----------------------------------------------------
 
     def _ensure_open(self):
         """Configure once and keep it open; per-frame setup costs more than the
-        inference does."""
+        inference does.
+
+        The activation context manager itself must be kept alive, not just
+        whatever its __enter__() returns (Hailo's own example never binds
+        this `with` to a name) — otherwise it has no remaining references
+        right after this call and can be garbage-collected immediately,
+        deactivating the network group before any inference runs.
+        """
         if self._pipeline is None:
-            self._activated = self.network_group.activate(self.ng_params).__enter__()
+            self._activation_cm = self.network_group.activate(self.ng_params)
+            self._activation_cm.__enter__()
             self._pipeline = InferVStreams(self.network_group, self.in_params,
                                            self.out_params).__enter__()
 
@@ -78,9 +86,9 @@ class HailoDetectionModel:
         if self._pipeline is not None:
             self._pipeline.__exit__(None, None, None)
             self._pipeline = None
-        if self._activated is not None:
-            self._activated.__exit__(None, None, None)
-            self._activated = None
+        if self._activation_cm is not None:
+            self._activation_cm.__exit__(None, None, None)
+            self._activation_cm = None
 
     # ---- pre / post ----------------------------------------------------
 

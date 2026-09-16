@@ -6,12 +6,15 @@ a live camera has no media clock, and a single image has neither.
 """
 
 import glob
+import queue
+import threading
 from pathlib import Path
 
 import cv2 as cv
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
 _GLOB_CHARS = "*?["
+CAMERA_STALL_TIMEOUT_S = 8.0
 
 
 class FrameSource:
@@ -28,11 +31,14 @@ class FrameSource:
         self.spec = str(spec)
         self._cap = None
         self._paths = []
+        self._camera_index = None
+        self._frame_queue = None
         path = Path(self.spec)
 
         if self.spec.isdigit():
             self.kind = "camera"
-            self._open(int(self.spec))
+            self._camera_index = int(self.spec)
+            self._open(self._camera_index)
         elif path.is_dir():
             self.kind = "images"
             self._paths = sorted(p for p in path.iterdir()
@@ -53,6 +59,9 @@ class FrameSource:
             self.kind = "video"
             self._open(self.spec)
 
+        if self.kind == "camera":
+            self._start_reader()
+
         self.width, self.height = self._probe_size()
 
     def _open(self, target):
@@ -62,7 +71,58 @@ class FrameSource:
                 f"cannot open source {self.spec!r}. For a camera try another index "
                 f"(0, 1, ...); for a file check the path; for a stream check the URL.")
 
+    def _start_reader(self):
+        """Reads frames on their own thread so a stalled USB camera (a real
+        failure mode, not hypothetical) can never freeze the caller: cv2's
+        VideoCapture.read() has no timeout and can block forever, but a
+        caller blocked on Queue.get(timeout=...) can detect that and recover
+        instead of hanging the whole pipeline with it."""
+        self._frame_queue = queue.Queue(maxsize=1)
+        threading.Thread(target=self._reader_loop, args=(self._cap,), daemon=True).start()
+
+    def _reader_loop(self, cap):
+        while True:
+            ok, frame = cap.read()
+            if not ok:
+                return   # camera closed or errored; the consumer's timeout takes it from here
+            try:
+                self._frame_queue.get_nowait()   # drop any stale unread frame
+            except queue.Empty:
+                pass
+            self._frame_queue.put(frame)
+
+    def _reconnect_camera(self):
+        """Called when no frame arrives within CAMERA_STALL_TIMEOUT_S. The old
+        capture's reader thread may still be stuck inside a blocking read —
+        there is no safe way to interrupt that from Python — so it is
+        abandoned (it exits on its own if the read ever returns) and a fresh
+        capture + reader thread takes over."""
+        try:
+            self._cap.release()
+        except Exception:
+            pass
+        self._cap = cv.VideoCapture(self._camera_index)
+        self._start_reader()
+
     def _probe_size(self):
+        if self.kind == "camera":
+            w = int(self._cap.get(cv.CAP_PROP_FRAME_WIDTH))
+            h = int(self._cap.get(cv.CAP_PROP_FRAME_HEIGHT))
+            if w and h:
+                return w, h
+            # Some backends only know the size after a read. Pull it through
+            # the same watchdog-protected queue the reader thread already
+            # started (not a raw self._cap.read()) — otherwise a camera
+            # that's stuck from the very first frame hangs at startup,
+            # before the watchdog protecting steady-state iteration exists.
+            try:
+                frame = self._frame_queue.get(timeout=CAMERA_STALL_TIMEOUT_S)
+            except queue.Empty:
+                raise RuntimeError(
+                    f"no frames from {self.spec!r} within "
+                    f"{CAMERA_STALL_TIMEOUT_S:g}s of opening it")
+            self._pending = frame
+            return frame.shape[1], frame.shape[0]
         if self._cap is not None:
             w = int(self._cap.get(cv.CAP_PROP_FRAME_WIDTH))
             h = int(self._cap.get(cv.CAP_PROP_FRAME_HEIGHT))
@@ -117,7 +177,19 @@ class FrameSource:
     # ---- iteration ----------------------------------------------------
 
     def __iter__(self):
-        if self._cap is not None:
+        if self.kind == "camera":
+            pending = getattr(self, "_pending", None)
+            if pending is not None:
+                self._pending = None
+                yield pending
+            while True:
+                try:
+                    frame = self._frame_queue.get(timeout=CAMERA_STALL_TIMEOUT_S)
+                except queue.Empty:
+                    self._reconnect_camera()
+                    continue
+                yield frame
+        elif self._cap is not None:
             pending = getattr(self, "_pending", None)
             if pending is not None:
                 self._pending = None

@@ -91,7 +91,15 @@ class AnnotatedVideoWriter:
                 self._proc.stdin.close()
             except (BrokenPipeError, OSError):
                 pass
-            self._proc.wait(timeout=60)
+            try:
+                self._proc.wait(timeout=60)
+            except subprocess.TimeoutExpired:
+                # A hung ffmpeg must not take run.py's own shutdown down with
+                # it — kill it and move on so the caller's cleanup (closing
+                # the CSV file, etc.) still runs.
+                self._proc.kill()
+                self._proc.wait()
+                print("ffmpeg did not exit within 60s; killed it", file=sys.stderr)
             if self._proc.returncode not in (0, None):
                 err = self._proc.stderr.read().decode(errors="replace")[:400]
                 print(f"ffmpeg exited {self._proc.returncode}: {err}", file=sys.stderr)

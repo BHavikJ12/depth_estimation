@@ -326,6 +326,42 @@ Copy it over:
 scp yolov5s.hef pi@raspberrypi.local:~/monoculer_camera_yolo/drone.hef
 ```
 
+### 3.5 Compiling a different model later
+
+A `.hef` is tied to one specific architecture and weights — swapping in a
+different model always means recompiling, never just swapping a file. The
+toolchain from 3.2 is already set up and does not need reinstalling; this is
+the same recipe, not a fresh start. In order:
+
+1. **Get the new model's ONNX.** Another Roboflow model: cache it the same
+   way, `--backend onnx --model-id <new-id>`. From elsewhere: just the
+   `.onnx` file.
+2. **Check its input shape.** The 3.4(a) `onnxsim --overwrite-input-shape`
+   fix is only needed if *this* model also reports dynamic dims — check with
+   the same onnxruntime inspection before assuming it applies.
+3. **Check `hailomz compile --help` before assuming a model name exists.**
+   3.4's `yolov5n` surprise was version-specific, not universal — a different
+   architecture (YOLOv8, YOLOv11, …) may have a direct match in the list,
+   with no substitution needed at all.
+4. **Calibration images.** Reusable as-is if the new model looks at similar
+   footage; rebuild per 3.3 if the visual domain is genuinely different.
+5. **Compile** with `--hw-arch` for *your hardware* (unchanged — that never
+   depends on the model) and `--classes` for the *new* model's class count.
+6. **Expect 3.4(b) and (c) to recur, possibly under different names.** The
+   missing `postprocess_config/` directory is a wheel-wide gap in this Model
+   Zoo version, not specific to `yolov5s` — a different model's own
+   `<name>_nms_config.json` is likely missing too, fetched from GitHub the
+   same way. The layer-name mismatch recurs for any model narrower/wider than
+   Hailo's reference of the same name; an anchor-free architecture (YOLOv8)
+   has a differently-shaped config with no anchors at all, so 3.4(c)'s exact
+   patch does not carry over to a different architecture family, only the
+   *method* (inspect the `.har`, find the real output layers) does.
+7. **Two things outside the compile step, easy to forget:**
+   `--keep-classes`/`--class-names` in `run.py` are tied to the *old* model's
+   class layout; `--target-size`/`--hfov` are tied to whatever real-world
+   object is being ranged, not the model itself — both need revisiting for a
+   new model even though neither touches the `.hef`.
+
 ---
 
 ## 4. HailoRT on the Pi
@@ -412,15 +448,30 @@ not, either use a USB camera or bridge the CSI camera to V4L2 with
 compiled by the route in section 3 does load and run. One real bug turned up
 in the process, now fixed:
 
-`_ensure_open` created and entered the `InferVStreams` pipeline *before*
-activating the network group. HailoRT requires the opposite order — the
-network group must be active before an inference pipeline is built on top of
-it. The symptom was every inference call raising
-`HailoRTNetworkGroupNotActivatedException` /
-`HAILO_NETWORK_GROUP_NOT_ACTIVATED(69)` immediately. `close()` had the matching
-bug in reverse (deactivating before closing the pipeline that was still using
-it). Both are now ordered activate → open pipeline, and close pipeline →
-deactivate.
+Two bugs turned up, both in `_ensure_open`/`close`, both now fixed:
+
+1. `_ensure_open` created and entered the `InferVStreams` pipeline *before*
+   activating the network group. HailoRT requires the opposite order — the
+   network group must be active before an inference pipeline is built on top
+   of it. `close()` had the matching bug in reverse (deactivating before
+   closing the pipeline that was still using it).
+2. Fixing the order alone did not fix the symptom. The line
+   `self._activated = self.network_group.activate(self.ng_params).__enter__()`
+   chains everything into one expression, keeping only what `__enter__()`
+   returns — not the context-manager object itself, which is what actually
+   holds the "network group is active" state via RAII. Hailo's own official
+   example never binds this specific `with` to a name at all, which is the
+   tell: `__enter__()` here returns nothing useful, so the real handle had no
+   references left the instant that line finished, and Python's
+   reference-counted GC could free it — deactivating the network group —
+   before any inference ran. The fix keeps the handle itself in
+   `self._activation_cm` and calls `__enter__()`/`__exit__()` on *that*,
+   separately from whatever it returns.
+
+Both together produced the same symptom: every inference call raising
+`HailoRTNetworkGroupNotActivatedException` / `HAILO_NETWORK_GROUP_NOT_ACTIVATED(69)`
+immediately. If you hit this and the ordering already looks right, check for
+bug 2 specifically — it is the less obvious of the pair.
 
 What is now verified against real hardware: HEF loading, network group
 configuration and activation, and running a live inference call without the
@@ -460,10 +511,95 @@ What *was already* verified offline in `selftest.py`, before hardware access:
 | `libgomp` allocation error | `export LD_PRELOAD=/usr/lib/aarch64-linux-gnu/libgomp.so.1` in `~/.bashrc` |
 | output video plays black | `sudo apt install ffmpeg`; without it the writer falls back to MPEG-4 Part 2 |
 | detections look wrong, not absent | not an install problem — see "What this model actually does, measured" in [README.md](README.md) |
+| `HailoRTNetworkGroupNotActivatedException` | see section 6 — two distinct bugs produce this, ordering and a discarded context-manager handle |
+| web stream frozen but `ssh` into the Pi still works fine | the camera read stalled, not the server — see section 8.3 |
+| web stream degrades / stops responding after hours, `ssh` also fine | stuck viewer threads from before the section 8.1 fix — confirm `timeout = 10` is actually in the deployed `web_stream.py` |
+| `ssh` itself also stops responding | the Pi or the network dropped, not the app — check the router/hotspot and the Pi's power supply before the code |
 
 ---
 
-## 8. A warning that outlives the install
+## 8. Running it unattended: a service, a web viewer, and what breaks over hours
+
+A one-off `run.py` invocation in a terminal is fine for testing, but three
+things are needed for it to run unattended (a systemd service, a way to see
+the feed without a display, and enough robustness to survive hours, not
+minutes) and each one surfaced its own real bug.
+
+### 8.1 View the feed over the network instead of `cv2.imshow`
+
+`--web-port PORT` (in `run.py`) starts a small MJPEG HTTP server and pushes
+every annotated frame to it — open `http://<pi-ip>:PORT/` from any browser on
+the same network, no player needed. `cv2.imshow`/`waitKey` have been removed
+from `run.py` entirely (there is no display code path left to hang or need an
+X server for), so this is the only way to view the feed now; `--no-display`
+and `--step` remain accepted for backward compatibility but do nothing.
+
+```bash
+./venv/bin/python run.py --source 0 --backend hailo --weights drone.hef \
+    --keep-classes 1 --conf 0.40 --hfov 70 --web-port 8000
+```
+
+**The bug this had:** the per-viewer connection handler had no socket
+timeout. A stalled client (locked phone screen, dropped wifi that never sends
+a clean TCP close) left `wfile.write()` blocked *forever* — that thread never
+exited. Every stall left one more stuck thread behind; over hours these
+accumulate and exhaust the Pi's memory. Fixed with a 10-second handler
+timeout ([web_stream.py](web_stream.py)); a stalled connection now gets
+cleaned up instead of hanging its thread indefinitely. This is a genuine
+"works for a while, degrades after some time" failure mode — if the stream
+stops responding after hours, check this file's `timeout` is actually in the
+deployed copy before looking elsewhere.
+
+### 8.2 A systemd service
+
+[drone-detect.service](drone-detect.service) — edit `User=`/the paths if your
+checkout is not at `/home/pi/depth_estimation`.
+
+```bash
+sudo cp drone-detect.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now drone-detect.service
+journalctl -u drone-detect.service -f          # follow it live
+```
+
+`Restart=on-failure` means a crash retries rather than staying down, which
+also means a crash loop (bad `.hef`, camera never appearing) will show as
+repeated short-lived PIDs in `journalctl`, not a single clean failure message.
+
+### 8.3 The camera read itself can hang the whole pipeline
+
+`cv2.VideoCapture.read()` has no timeout. If the AR0144's USB connection
+hiccups — a real failure mode on a long unattended run, not hypothetical —
+that call can block forever, and since it sat directly in `run.py`'s main
+loop, the *entire* pipeline froze with it: no new detections, and no new
+frames reaching the web stream either, while the process itself stayed alive
+and `ssh` kept working fine. That combination — reachable over SSH,
+completely unresponsive otherwise — is the signature of this bug specifically,
+as opposed to 8.1's thread leak (which shows as climbing memory/thread count)
+or a genuine network/router problem (which takes SSH down too).
+
+Fixed in [sources.py](sources.py): the camera is now read on its own thread
+into a 1-slot queue; the main loop waits on that queue with an 8-second
+timeout (`CAMERA_STALL_TIMEOUT_S`) instead of on the raw read. No frame in
+time reopens the camera from scratch. The old stuck thread is abandoned, not
+killed — there is no safe way to interrupt a blocked C call from Python — and
+is left to exit on its own if the read ever returns.
+
+### 8.4 Two more long-run-only fixes, lower stakes
+
+* [tracker.py](tracker.py): the Kalman filter's covariance matrix is now
+  re-symmetrized after every update. Floating-point drift can slowly make it
+  numerically non-symmetric over a very long run; this is standard defensive
+  practice for a filter meant to run for hours, not a fix for an observed
+  crash.
+* [video_writer.py](video_writer.py): `release()` now catches
+  `subprocess.TimeoutExpired` from a hung ffmpeg and kills it, instead of
+  raising out of `run.py`'s `finally` block and skipping the CSV file close
+  that comes after it. Only matters with `--save` for video output.
+
+---
+
+## 9. A warning that outlives the install
 
 Quantising to int8 costs accuracy, and this model has very little to spare. It
 was measured on your own clips as unreliable except for airborne targets against
