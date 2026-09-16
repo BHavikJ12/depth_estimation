@@ -107,7 +107,8 @@ command with `QT_QPA_PLATFORM=xcb`.
 |---|---|
 | `--source` | camera index, video path, stream URL, image path, folder, or glob |
 | `--model-id` | `drone-detection-rchy7/8` is the full-dataset model (mAP 75.9). `run.py --list-versions` prints them all |
-| `--keep-classes 1` | this model has 3 classes and only id 1 is the aircraft; without this you get birds and dataset noise |
+| `--keep-classes 1` | version 8 has 3 classes and only index 1 is the drone; without this you get birds and dataset noise. **The indices differ per version** — see below |
+| `--class-names` | names for the indices, purely cosmetic: `'bird,drone,flock of birds'` for version 8 |
 | `--conf` | detection threshold. 0.40 is a reasonable start; raise it if the sky is full of false boxes |
 | `--target-size` | the assumed real span in metres. **Every range scales with this** |
 | `--fx` / `--hfov` / `--calib` | focal length. **Every range scales with this too** — see below |

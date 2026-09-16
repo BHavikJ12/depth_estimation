@@ -282,7 +282,7 @@ hailortcli run drone.hef
 ```bash
 ./venv/bin/python run.py --source 0 \
     --backend hailo --weights drone.hef \
-    --keep-classes 1 --class-names 0,drone,bird \
+    --keep-classes 1 --class-names 'bird,drone,flock of birds' \
     --conf 0.40 --hfov 70 --target-size 0.5
 ```
 

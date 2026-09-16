@@ -85,9 +85,16 @@ def resolve_api_key(explicit=None):
     return key
 
 
-def list_versions(api_key=None):
+def list_versions(api_key=None, with_classes=True):
     """Ask Roboflow which trained versions of the project exist, so the model
-    id does not have to be guessed."""
+    id does not have to be guessed.
+
+    Class lists are fetched per version, one request each, because the project
+    endpoint does not carry them and the versions genuinely differ: version 1
+    has a single unnamed class while version 8 has three. Since the class index
+    is a position in that list, the same --keep-classes means different things
+    on different versions, or nothing at all.
+    """
     import requests
 
     key = resolve_api_key(api_key)
@@ -96,6 +103,18 @@ def list_versions(api_key=None):
     r.raise_for_status()
     project = r.json().get("project", {})
     versions = r.json().get("versions", [])
+
+    per_version = {}
+    if with_classes:
+        for v in versions:
+            num = str(v.get("id", "")).rsplit("/", 1)[-1]
+            try:
+                vr = requests.get(f"https://api.roboflow.com/{WORKSPACE}/{PROJECT}/{num}",
+                                  params={"api_key": key}, timeout=30)
+                vr.raise_for_status()
+                per_version[num] = vr.json().get("version", {}).get("classes") or []
+            except Exception:
+                per_version[num] = []          # keep listing the rest
     return {
         "name": project.get("name", PROJECT),
         "classes": project.get("classes", {}),
@@ -106,6 +125,12 @@ def list_versions(api_key=None):
                 "name": v.get("name", ""),
                 "map": (v.get("model") or {}).get("map"),
                 "images": v.get("images"),
+                # Per-version, not project-level: versions differ in which
+                # classes they were trained on, and the class *index* follows
+                # this list's order. Version 1 has a single unnamed class, so
+                # --keep-classes 1 silently matches nothing there.
+                "classes": per_version.get(
+                    str(v.get("id", "")).rsplit("/", 1)[-1], v.get("classes") or []),
             }
             for v in versions
         ],
