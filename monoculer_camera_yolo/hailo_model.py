@@ -70,17 +70,17 @@ class HailoDetectionModel:
         """Configure once and keep it open; per-frame setup costs more than the
         inference does."""
         if self._pipeline is None:
+            self._activated = self.network_group.activate(self.ng_params).__enter__()
             self._pipeline = InferVStreams(self.network_group, self.in_params,
                                            self.out_params).__enter__()
-            self._activated = self.network_group.activate(self.ng_params).__enter__()
 
     def close(self):
-        if self._activated is not None:
-            self._activated.__exit__(None, None, None)
-            self._activated = None
         if self._pipeline is not None:
             self._pipeline.__exit__(None, None, None)
             self._pipeline = None
+        if self._activated is not None:
+            self._activated.__exit__(None, None, None)
+            self._activated = None
 
     # ---- pre / post ----------------------------------------------------
 

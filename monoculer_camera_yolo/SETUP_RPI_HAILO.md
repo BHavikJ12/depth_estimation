@@ -178,29 +178,117 @@ that is exactly where this model's behaviour changes.
 
 ### 3.4 Compile
 
+`--hw-arch` is `hailo8l` for the AI Kit and `hailo8` for the AI HAT+; a HEF built
+for one will not load on the other.
+
+**Model Zoo 5.4.0 has no plain `yolov5n` detection config** — only
+`yolov5n_seg*` (segmentation). Run `hailomz compile --help` and check the
+`model_name` choices before assuming `yolov5n` exists in whatever version you
+installed. Use `yolov5s` instead: YOLOv5n and YOLOv5s share the same head
+architecture and default anchors (n/s/m/l/x all use the same anchors in the
+stock architecture), differing only in channel width, so `yolov5s`'s config is
+the right template even though the actual weights are the nano variant.
+
 ```bash
 source ~/hailo-dfc/bin/activate
-hailomz compile yolov5n \
+hailomz compile yolov5s \
     --ckpt ~/.cache/roboflow-onnx/drone-detection-rchy7--8/weights.onnx \
-    --hw-arch hailo8l \
+    --hw-arch hailo8 \
     --calib-path /tmp/calib \
     --classes 3
 ```
 
-`--hw-arch` is `hailo8l` for the AI Kit and `hailo8` for the AI HAT+; a HEF built
-for one will not load on the other. Output lands as `yolov5n.hef`.
+Three real problems showed up compiling the actual Roboflow export, in order:
+
+**a) Dynamic input shape.** The ONNX reports its input as
+`[batch, 3, height, width]` with every dim dynamic, and parsing fails with
+`Could not parse the model due to dynamic shapes`. The `--tensor-shapes` flag
+the error message suggests does not exist on `hailomz compile` in this
+version (`unrecognized arguments`). Fix it on the ONNX itself first, with
+`onnxsim` (already installed as a DFC dependency):
+
+```bash
+onnxsim ~/.cache/roboflow-onnx/drone-detection-rchy7--8/weights.onnx \
+    /tmp/weights_fixed.onnx \
+    --overwrite-input-shape images:1,3,640,640
+```
+
+Use `/tmp/weights_fixed.onnx` as `--ckpt` from here on, not the original file.
+
+**b) Missing NMS config file in the wheel.** Compiling then fails later, during
+`_handle_classes_argument`, with:
+
+```
+FileNotFoundError: .../hailo_model_zoo/cfg/postprocess_config/yolov5s_nms_config.json
+```
+
+That whole directory is absent from the `hailo_model_zoo-5.4.0` wheel — a
+packaging gap, not something you did wrong. Pull the file from the matching
+GitHub release tag instead of guessing its contents (it encodes real anchor
+box values, wrong ones silently produce bad boxes, not an error):
+
+```bash
+PKGDIR=$(python -c "import hailo_model_zoo, os; print(os.path.dirname(hailo_model_zoo.__file__))")
+mkdir -p "$PKGDIR/cfg/postprocess_config"
+gh api "repos/hailo-ai/hailo_model_zoo/contents/hailo_model_zoo/cfg/postprocess_config/yolov5s_nms_config.json?ref=v5.4.0" \
+    --jq '.content' | base64 -d > "$PKGDIR/cfg/postprocess_config/yolov5s_nms_config.json"
+```
+
+Match `?ref=` to whatever `hailomz --version` actually reports, not always
+`v5.4.0`.
+
+**c) Detection-head layer names don't match.** Compiling then fails with:
+
+```
+HailoNNException: The layer named conv63 doesn't exist in the HN
+```
+
+The config's `bbox_decoders` hardcode the reference `yolov5s`'s internal layer
+names (`conv55`/`conv63`/`conv70`) for its three detection heads. Our model is
+narrower (fewer parameters than the reference `yolov5s`), so its equivalent
+heads land at different indices. Find the real ones from the `.har` that
+`hailomz compile` saves on its first (failing) attempt:
+
+```bash
+source ~/hailo-dfc/bin/activate
+python - <<'EOF'
+from hailo_sdk_client import ClientRunner
+runner = ClientRunner(har="yolov5s.har")
+hn = runner.get_hn_model()
+print("real output layers:", [l.name for l in hn.get_real_output_layers()])
+EOF
+```
+
+That printed `conv47`, `conv54`, `conv60` here, in the same stride-8/16/32
+order the reference names filled — the anchor `w`/`h` values stay the same,
+only the `encoded_layer` field per decoder changes:
+
+```bash
+python - <<EOF
+import json
+path = "$PKGDIR/cfg/postprocess_config/yolov5s_nms_config.json"
+with open(path) as f:
+    cfg = json.load(f)
+mapping = {"conv55": "conv47", "conv63": "conv54", "conv70": "conv60"}  # from your own .har, not these exact numbers
+for d in cfg["bbox_decoders"]:
+    old = d["encoded_layer"]
+    d["encoded_layer"] = mapping[old]
+with open(path, "w") as f:
+    json.dump(cfg, f, indent=4)
+EOF
+```
+
+Re-run the same `hailomz compile` command from above once all three are fixed.
+It ends with `HEF file written to yolov5s.hef` — despite the model name in the
+filename, this is your `yolov5v6n` weights, compiled.
 
 If quantisation is killed for memory on 15 GB, cut the calibration set to ~256
-images and close everything else. If `hailomz` cannot match the ONNX to the
-`yolov5n` config, the node names differ from the model zoo's expectation and you
-need the manual three-step route (`hailo parser onnx` → `hailo optimize` →
-`hailo compiler`) with explicit `--start-node-names` / `--end-node-names` taken
-from the graph — Netron will show you the names.
+images and close everything else.
 
 Copy it over:
 
 ```bash
-scp yolov5n.hef pi@raspberrypi.local:~/monoculer_camera_yolo/drone.hef
+scp yolov5s.hef pi@raspberrypi.local:~/monoculer_camera_yolo/drone.hef
 ```
 
 ---
@@ -285,26 +373,38 @@ not, either use a USB camera or bridge the CSI camera to V4L2 with
 
 ## 6. Honest status of this backend
 
-**[hailo_model.py](hailo_model.py) has never been run against real hardware.**
-There is no Hailo device on the machine it was written on. What *is* verified,
-offline in `selftest.py`:
+**Update: run against real Hailo-8 hardware (AI HAT+, HailoRT 4.23.0).** A HEF
+compiled by the route in section 3 does load and run. One real bug turned up
+in the process, now fixed:
+
+`_ensure_open` created and entered the `InferVStreams` pipeline *before*
+activating the network group. HailoRT requires the opposite order — the
+network group must be active before an inference pipeline is built on top of
+it. The symptom was every inference call raising
+`HailoRTNetworkGroupNotActivatedException` /
+`HAILO_NETWORK_GROUP_NOT_ACTIVATED(69)` immediately. `close()` had the matching
+bug in reverse (deactivating before closing the pipeline that was still using
+it). Both are now ordered activate → open pipeline, and close pipeline →
+deactivate.
+
+What is now verified against real hardware: HEF loading, network group
+configuration and activation, and running a live inference call without the
+HailoRT calls themselves raising. What is **still not verified**: the actual
+output format and box positions. Section 3's `bbox_decoders` fix used the
+stock COCO anchor values (see the layer-name-mismatch note in section 3.4) —
+those weren't checked against this specific trained model's real anchors,
+which auto-anchor training can shift away from the defaults. Before trusting
+any range/position number this backend reports, compare its boxes against the
+same footage run through `--backend onnx` (known-good) and look for a
+systematic offset or scale error — that would point at the anchor values,
+not a code bug.
+
+What *was already* verified offline in `selftest.py`, before hardware access:
 
 * the NMS output format unpacks to the right frame pixels, class index and score
 * the confidence threshold is applied
 * an NMS output is told apart from a raw tensor output
 * empty classes do not crash it
-
-What is **not** verified: that the HailoRT calls (`VDevice`, `ConfigureParams`,
-`InferVStreams`) are correct against your installed version, and that a HEF
-compiled by the route in section 3 produces the output layout assumed here.
-HailoRT's Python API has changed across releases.
-
-The likely failure is the output format. The code handles both a HEF with NMS
-compiled in (per-class lists of normalised boxes) and a raw YOLO head, and picks
-between them by inspecting what comes back. If boxes land in the wrong place or
-nothing is detected while `hailortcli run drone.hef` reports fine throughput,
-that decision is where to look first — print `results[self.out_infos[0].name]`
-in `__call__` and compare its shape against the two branches.
 
 ---
 
