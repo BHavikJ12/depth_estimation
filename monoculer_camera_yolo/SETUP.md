@@ -7,6 +7,22 @@ Total: ~420 MB of disk, one 7 MB model download, about five minutes.
 
 ---
 
+## 0. What you have to do
+
+Four things, in order. Nothing else is required.
+
+| # | step | needs internet? |
+|---|---|---|
+| 1 | install system packages (`apt`) | yes |
+| 2 | `git clone` the repo (~315 KB) | yes |
+| 3 | `./setup.sh` — builds the venv, runs the tests | yes (pip) |
+| 4 | get the model weights (~7 MB): download, or copy a cache | only for the download |
+
+Steps 2-4 each have an offline alternative if the machine has no network; they
+are noted in place.
+
+---
+
 ## 1. What the target machine needs
 
 | | |
@@ -124,38 +140,39 @@ requests 2.34.2, onnxruntime 1.23.2 on Python 3.10.12.
 
 ---
 
-## 4. The API key
+## 4. The model weights
+
+The repo contains no weights. You need the ~7 MB ONNX on the machine before it
+can detect anything, and there are two ways to get it.
+
+### A. Let it download itself (needs a key, once)
 
 ```bash
 export ROBOFLOW_API_KEY=xxxxxxxxxxxx
+echo 'export ROBOFLOW_API_KEY=xxxxxxxxxxxx' >> ~/.bashrc   # survives new shells
 ```
 
-Put it in `~/.bashrc` so it survives new shells:
+Free key from <https://app.roboflow.com/settings/api>. The first run fetches the
+weights into `~/.cache/roboflow-onnx/` and everything after that is local.
 
-```bash
-echo 'export ROBOFLOW_API_KEY=xxxxxxxxxxxx' >> ~/.bashrc
-source ~/.bashrc
-```
-
-The key is needed once, to download the model's ONNX weights into
-`~/.cache/roboflow-onnx/`. After that the tool runs offline — though it still
-reads the variable at startup, so keep it set.
-
-The cache location can be moved with `ROBOFLOW_ONNX_CACHE=/some/path`, which is
-useful for keeping it on a larger disk or for testing a clean download.
-
-**Installing somewhere with no internet at all?** Copy the cache directory over
-from a machine that has already run once:
+### B. Copy the cache from a machine that already has it (no key, no internet)
 
 ```bash
 # on the working machine
 tar czf roboflow-cache.tar.gz -C ~/.cache roboflow-onnx
-# on the offline machine
+# on the target machine
 tar xzf roboflow-cache.tar.gz -C ~/.cache
 ```
 
-You will still need the pip packages, which means either network access for
-step 3 or a wheel bundle built with `pip download -r requirements.txt`.
+**Once the cache is in place the key is not needed at all** — not at startup,
+not ever. The key is required only to download something not already cached, and
+the error message says exactly that when it happens.
+
+You will still need the pip packages, so either network access for step 3 or a
+wheel bundle built with `pip download -r requirements.txt`.
+
+`ROBOFLOW_ONNX_CACHE=/some/path` moves the cache elsewhere, useful for a larger
+disk or for testing a clean download.
 
 ---
 

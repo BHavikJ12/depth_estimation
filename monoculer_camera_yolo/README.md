@@ -24,7 +24,9 @@ export ROBOFLOW_API_KEY=xxxxxxxxxxxx    # free: https://app.roboflow.com/setting
 
 Put the export in `~/.bashrc` so it survives new shells. The first run downloads
 the model's ONNX weights (7 MB) to `~/.cache/roboflow-onnx/`; after that it is
-fully local and offline.
+fully local and offline, and the key is no longer needed — it is required only
+to download something not already cached. Copying that cache directory to
+another machine is enough to run there with no key at all.
 
 > **pip on this machine:** `~/.config/pip/pip.conf` (NVIDIA PyIndex) points at
 > `pypi.ngc.nvidia.com`, which does not resolve, so every pip call fails with a
