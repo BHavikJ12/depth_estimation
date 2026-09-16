@@ -24,7 +24,9 @@ export ROBOFLOW_API_KEY=xxxxxxxxxxxx    # free: https://app.roboflow.com/setting
 
 Put the export in `~/.bashrc` so it survives new shells. The first run downloads
 the model's ONNX weights (7 MB) to `~/.cache/roboflow-onnx/`; after that it is
-fully local and offline.
+fully local and offline, and the key is no longer needed — it is required only
+to download something not already cached. Copying that cache directory to
+another machine is enough to run there with no key at all.
 
 > **pip on this machine:** `~/.config/pip/pip.conf` (NVIDIA PyIndex) points at
 > `pypi.ngc.nvidia.com`, which does not resolve, so every pip call fails with a
@@ -105,7 +107,8 @@ command with `QT_QPA_PLATFORM=xcb`.
 |---|---|
 | `--source` | camera index, video path, stream URL, image path, folder, or glob |
 | `--model-id` | `drone-detection-rchy7/8` is the full-dataset model (mAP 75.9). `run.py --list-versions` prints them all |
-| `--keep-classes 1` | this model has 3 classes and only id 1 is the aircraft; without this you get birds and dataset noise |
+| `--keep-classes 1` | version 8 has 3 classes and only index 1 is the drone; without this you get birds and dataset noise. **The indices differ per version** — see below |
+| `--class-names` | names for the indices, purely cosmetic: `'bird,drone,flock of birds'` for version 8 |
 | `--conf` | detection threshold. 0.40 is a reasonable start; raise it if the sky is full of false boxes |
 | `--target-size` | the assumed real span in metres. **Every range scales with this** |
 | `--fx` / `--hfov` / `--calib` | focal length. **Every range scales with this too** — see below |

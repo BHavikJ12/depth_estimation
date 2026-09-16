@@ -30,6 +30,23 @@ Your laptop is Ubuntu 22.04 x86_64, so it can do the compile — though with 15 
 of RAM you are under Hailo's recommended 32 GB and the quantisation step may need
 a smaller calibration set (section 3).
 
+### The checklist
+
+| # | step | where | needed for |
+|---|---|---|---|
+| 1 | firmware, kernel, PCIe Gen 3 | Pi | both paths |
+| 2 | `apt` system packages | Pi | both paths |
+| 3 | `git clone` + `./setup.sh` | Pi | both paths |
+| 4 | model weights: download or copy a cache | Pi | **CPU path only** |
+| 5 | install the Dataflow Compiler | laptop | Hailo only |
+| 6 | build a calibration set from your own clips | laptop | Hailo only |
+| 7 | compile ONNX → `.hef`, `scp` it to the Pi | laptop | Hailo only |
+| 8 | `apt install hailo-all` | Pi | Hailo only |
+
+Steps 1-4 give you a working CPU install. 5-8 add the accelerator. **The Hailo
+path needs no Roboflow key and no weights download at all** — the `.hef` is a
+local file you built, so step 4 is skippable if you are going straight to Hailo.
+
 ### Consider skipping Hailo first
 
 Everything in this project runs on the Pi's CPU with no Hailo involvement, using
@@ -98,10 +115,28 @@ built for x86_64 and will not run on the Pi's ARM at all.
 > venv. Build the venv without that flag and `import hailo_platform` fails with
 > no obvious reason. It is harmless on the CPU-only path, so use it either way.
 
-Set the key and check it runs:
+### The model weights
+
+The CPU path needs the ~7 MB ONNX, and there are two ways to get it onto the Pi:
 
 ```bash
+# A. let it download itself on first run (needs a key and internet, once)
 echo 'export ROBOFLOW_API_KEY=xxxxxxxx' >> ~/.bashrc && source ~/.bashrc
+#    ...then the first run of run.py fetches it into ~/.cache/roboflow-onnx/
+
+# B. or copy the cache from a machine that has already run it — no key needed
+#    on the laptop:
+tar czf roboflow-cache.tar.gz -C ~/.cache roboflow-onnx
+scp roboflow-cache.tar.gz pi@raspberrypi.local:~/
+#    on the Pi:
+tar xzf roboflow-cache.tar.gz -C ~/.cache
+```
+
+With the cache in place the Pi runs fully offline and never asks for a key.
+
+Check it runs:
+
+```bash
 ./venv/bin/python run.py --source 0 \
     --model-id drone-detection-rchy7/8 --keep-classes 1 \
     --conf 0.40 --hfov 70 --no-display --max-frames 60
@@ -335,7 +370,7 @@ hailortcli run drone.hef
 ```bash
 ./venv/bin/python run.py --source 0 \
     --backend hailo --weights drone.hef \
-    --keep-classes 1 --class-names 0,drone,bird \
+    --keep-classes 1 --class-names 'bird,drone,flock of birds' \
     --conf 0.40 --hfov 70 --target-size 0.5
 ```
 
@@ -412,6 +447,8 @@ What *was already* verified offline in `selftest.py`, before hardware access:
 
 | symptom | cause and fix |
 |---|---|
+| `error: No Roboflow API key` | only the CPU path needs one, and only to *download*. Either set the key, or copy `~/.cache/roboflow-onnx/` over from a machine that has it. On `--backend hailo` this should never appear |
+| `... is not cached ... has to be downloaded` | the weights are missing and there is no key. Section 2, "The model weights" |
 | `hailortcli` not found | `sudo apt install hailo-all`, then reboot |
 | `fw-control identify` fails | HAT not seated, or PCIe not enabled. Check `lspci \| grep -i hailo` |
 | `import hailo_platform` fails, CLI works | venv built without `--system-site-packages`; rebuild it |

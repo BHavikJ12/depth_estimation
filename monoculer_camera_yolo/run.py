@@ -143,10 +143,20 @@ def main(argv=None):
 
     if args.list_versions:
         info = list_versions(args.api_key)
-        print(f"{info['name']}  classes: {info['classes']}")
+        print(f"{info['name']}  (project-wide annotation counts: {info['classes']})\n")
         for v in info["versions"]:
-            print(f"  --model-id {v['id']}   {v['name']}  "
+            print(f"  --model-id {v['version']}   {v['name']}   "
                   f"images={v['images']}  mAP={v['map']}")
+            if v["classes"]:
+                names = ",".join(v["classes"])
+                idx = "  ".join(f"{i}={c}" for i, c in enumerate(v["classes"]))
+                print(f"      classes: {idx}")
+                print(f"      --class-names '{names}'")
+            else:
+                print("      classes: not reported for this version")
+        print("\nThe class index is the position in that list, and it differs "
+              "between versions.\nPassing --keep-classes for an index a version "
+              "does not have matches nothing at all.")
         return 0
 
     source = FrameSource(args.source)

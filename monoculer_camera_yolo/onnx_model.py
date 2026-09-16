@@ -47,14 +47,25 @@ def _find_urls(blob):
     return weights, env
 
 
-def fetch_artifacts(model_id, api_key, cache_dir=CACHE_DIR, force=False):
-    """Download and cache (weights.onnx, environment.json) for a model id."""
-    import requests
+def fetch_artifacts(model_id, api_key=None, cache_dir=CACHE_DIR, force=False):
+    """Download and cache (weights.onnx, environment.json) for a model id.
 
+    The key is needed only to *download*. Once the cache is populated — by an
+    earlier run, or by copying the directory from another machine — this runs
+    with no key and no network, which is the whole point of the offline path.
+    """
     dest = Path(cache_dir) / model_id.replace("/", "--")
     onnx_path, env_path = dest / "weights.onnx", dest / "environment.json"
     if onnx_path.exists() and env_path.exists() and not force:
         return onnx_path, env_path
+
+    import requests
+    if not api_key:
+        raise RuntimeError(
+            f"{model_id} is not cached in {dest}, so it has to be downloaded, "
+            "and that needs a Roboflow API key: `export ROBOFLOW_API_KEY=...` "
+            "(free at https://app.roboflow.com/settings/api), or copy an "
+            "already-populated cache directory from another machine.")
 
     dest.mkdir(parents=True, exist_ok=True)
     r = requests.get(ARTIFACT_URL.format(model_id=model_id),
