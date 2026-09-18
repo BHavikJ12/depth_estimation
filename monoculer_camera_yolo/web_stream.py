@@ -11,6 +11,7 @@ Then open http://<this-device-ip>:8000/ in a browser on any device on the
 same network (phone, laptop) — no player or extra software needed.
 """
 
+import socket
 import socketserver
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -100,6 +101,39 @@ class _Handler(BaseHTTPRequestHandler):
 class _ThreadingHTTPServer(socketserver.ThreadingMixIn, HTTPServer):
     daemon_threads = True
     allow_reuse_address = True
+
+
+def local_addresses():
+    """This machine's LAN addresses, best guess first.
+
+    The primary one comes from opening a UDP socket toward a public address and
+    asking the OS which interface it would use — no packet is actually sent, and
+    it works without extra dependencies on Linux, macOS and Windows alike. It is
+    far more reliable than gethostbyname(hostname), which on many Linux boxes
+    just returns 127.0.1.1 from /etc/hosts.
+    """
+    found = []
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))
+        found.append(s.getsockname()[0])
+    except OSError:
+        pass                                  # no route: offline, or no LAN
+    finally:
+        s.close()
+
+    try:
+        for addr in socket.gethostbyname_ex(socket.gethostname())[2]:
+            if not addr.startswith("127.") and addr not in found:
+                found.append(addr)
+    except OSError:
+        pass
+    return found
+
+
+def local_urls(port):
+    """Ready-to-open URLs for this server, for printing at startup."""
+    return [f"http://{a}:{port}/" for a in local_addresses()]
 
 
 def start_server(port, host="0.0.0.0", quality=80):

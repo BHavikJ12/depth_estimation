@@ -307,8 +307,16 @@ it in a browser on a phone or another laptop instead of the desktop window:
 venv\Scripts\python.exe run.py --source 0 --model-id drone-detection-rchy7/8 --keep-classes 1 --conf 0.40 --hfov 70 --web-port 8000 --no-display
 ```
 
-Find this PC's address with `ipconfig` (look for **IPv4 Address**, something
-like `192.168.1.42`), then open `http://192.168.1.42:8000/` on the other device.
+**It prints the address for you** when it starts — you do not have to work it
+out:
+
+```
+web stream, open from any device on this network:
+    http://192.168.1.42:8000/
+```
+
+Type that into a browser on your phone. Both devices must be on the same Wi-Fi.
+(If you ever need to find it yourself: `ipconfig`, look for **IPv4 Address**.)
 
 **Windows Firewall will ask for permission the first time.** Tick **Private
 networks** and click *Allow access*. If you dismissed it and nothing loads, the

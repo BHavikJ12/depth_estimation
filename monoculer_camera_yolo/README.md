@@ -118,7 +118,8 @@ command with `QT_QPA_PLATFORM=xcb`.
 | `--stride N` | run the detector every Nth frame, tracker coasts between. Cheap speedup |
 | `--save` | annotated video, image, or folder, matching the input kind |
 | `--save-csv` | per-frame range telemetry |
-| `--no-display` | headless |
+| `--no-display` | no preview window. A machine with no display skips it automatically, with a warning |
+| `--web-port 8000` | also serve the annotated feed over HTTP; the URL to open is printed at startup |
 | `--step` | wait for a keypress between frames |
 | `--max-frames N` | stop early, useful for a quick look |
 

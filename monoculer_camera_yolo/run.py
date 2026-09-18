@@ -246,9 +246,16 @@ def main(argv=None):
               file=sys.stderr)
     web_broadcaster = None
     if args.web_port:
-        from web_stream import start_server
+        from web_stream import local_urls, start_server
         _, web_broadcaster = start_server(args.web_port)
-        print(f"web stream: http://<this-device-ip>:{args.web_port}/")
+        urls = local_urls(args.web_port)
+        if urls:
+            print("web stream, open from any device on this network:")
+            for u in urls:
+                print(f"    {u}")
+        else:
+            print(f"web stream on port {args.web_port}, but no network address "
+                  f"was found — try http://localhost:{args.web_port}/")
 
     frame_idx = 0
     t_start = time.time()
