@@ -30,6 +30,25 @@ from sources import FrameSource
 from tracker import DroneTracker
 from video_writer import AnnotatedVideoWriter
 
+WINDOW_TITLE = "monocular drone range"
+
+
+def gui_available():
+    """Whether opening a window will work here.
+
+    This has to be decided *before* calling imshow, not by catching its error:
+    with no display, OpenCV's Qt backend prints "no Qt platform plugin could be
+    initialized" and aborts the process outright. There is no exception to
+    catch, and a run that was writing a video loses it.
+
+    Windows and macOS always have a window server. On Linux, a session with
+    neither DISPLAY nor WAYLAND_DISPLAY is headless — an SSH session to a Pi,
+    a systemd service, a container.
+    """
+    if os.name == "nt" or sys.platform == "darwin":
+        return True
+    return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+
 
 def build_camera(args, width, height):
     if args.calib:
@@ -136,7 +155,10 @@ def main(argv=None):
                      help="video codec. auto/h264 use the system ffmpeg (libx264) "
                           "and produce a file every player can open; mp4v is "
                           "OpenCV's own, which some players render black")
-    out.add_argument("--no-display", action="store_true", help="headless")
+    out.add_argument("--no-display", action="store_true",
+                     help="do not open a preview window. Implied anyway on a "
+                          "machine with no GUI, where the window is skipped "
+                          "with a warning rather than crashing")
     out.add_argument("--quiet", action="store_true", help="no per-frame console output")
     out.add_argument("--web-port", type=int, default=0,
                      help="serve the annotated feed as MJPEG on this port; open "
@@ -215,6 +237,13 @@ def main(argv=None):
         save_dir = Path(args.save)
         save_dir.mkdir(parents=True, exist_ok=True)
 
+    show_window = not args.no_display
+    if show_window and not gui_available():
+        show_window = False
+        print("no display detected (no DISPLAY/WAYLAND_DISPLAY), so no preview "
+              "window." + ("" if args.web_port else " Use --web-port to watch the "
+              "annotated feed in a browser, or --save to write a video."),
+              file=sys.stderr)
     web_broadcaster = None
     if args.web_port:
         from web_stream import start_server
@@ -239,6 +268,17 @@ def main(argv=None):
 
             if web_broadcaster is not None:
                 web_broadcaster.update(frame)
+
+            if show_window:
+                try:
+                    cv.imshow(WINDOW_TITLE, frame)
+                    wait = 0 if (args.step or source.is_single_image) else 1
+                    if cv.waitKey(wait) & 0xFF in (27, ord("q")):
+                        break
+                except cv.error as exc:      # a GUI-less OpenCV build
+                    show_window = False
+                    print(f"cannot open a window, continuing without one ({exc})",
+                          file=sys.stderr)
 
             if csv_writer:
                 # A recorded clip's own timeline, so the log is replayable;
@@ -285,6 +325,8 @@ def main(argv=None):
             writer.release()
         if csv_file is not None:
             csv_file.close()
+        if show_window:
+            cv.destroyAllWindows()
 
     print(f"\n{frame_idx} frame(s) in {time.time() - t_start:.1f}s")
     if args.save:
