@@ -10,11 +10,16 @@ So when a system ffmpeg with libx264 is on PATH, frames are piped to it and the
 result is ordinary H.264. Otherwise it falls back to OpenCV, and says so.
 """
 
+import os
 import shutil
 import subprocess
 import sys
 
 import cv2 as cv
+
+# On Windows every subprocess.Popen flashes a console window unless told not
+# to. The flag does not exist on other platforms.
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
 
 
 def _ffmpeg_with_x264():
@@ -23,7 +28,8 @@ def _ffmpeg_with_x264():
         return None
     try:
         out = subprocess.run([exe, "-hide_banner", "-encoders"],
-                             capture_output=True, text=True, timeout=15).stdout
+                             capture_output=True, text=True, timeout=15,
+                             creationflags=_NO_WINDOW).stdout
     except (subprocess.SubprocessError, OSError):
         return None
     return exe if "libx264" in out else None
@@ -71,7 +77,8 @@ class AnnotatedVideoWriter:
         ]
         self._proc = subprocess.Popen(cmd, stdin=subprocess.PIPE,
                                       stdout=subprocess.DEVNULL,
-                                      stderr=subprocess.PIPE)
+                                      stderr=subprocess.PIPE,
+                                      creationflags=_NO_WINDOW)
 
     def write(self, frame):
         if frame.shape[1] != self.width or frame.shape[0] != self.height:

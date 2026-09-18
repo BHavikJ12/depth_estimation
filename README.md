@@ -27,7 +27,8 @@ cd monocular_depth_anything && ./setup.sh  # see its SETUP.md
 
 Full instructions:
 
-* [monoculer_camera_yolo/SETUP.md](monoculer_camera_yolo/SETUP.md) — laptop or desktop
+* [monoculer_camera_yolo/SETUP.md](monoculer_camera_yolo/SETUP.md) — Linux/macOS laptop or desktop
+* [monoculer_camera_yolo/SETUP_WINDOWS.md](monoculer_camera_yolo/SETUP_WINDOWS.md) — Windows, written for complete beginners
 * [monoculer_camera_yolo/SETUP_RPI_HAILO.md](monoculer_camera_yolo/SETUP_RPI_HAILO.md) — Raspberry Pi 5 with a Hailo AI HAT
 * [monocular_depth_anything/SETUP.md](monocular_depth_anything/SETUP.md)
 * [HITNET.md](HITNET.md) — the stereo pipeline

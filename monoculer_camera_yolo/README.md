@@ -15,6 +15,9 @@ up, though it will read that project's calibration YAMLs.
 
 ## 1. Setup
 
+**On Windows?** Follow [SETUP_WINDOWS.md](SETUP_WINDOWS.md) instead — a
+step-by-step guide that assumes no Python experience.
+
 ```bash
 git clone https://github.com/BHavikJ12/depth_estimation.git
 cd depth_estimation/monoculer_camera_yolo

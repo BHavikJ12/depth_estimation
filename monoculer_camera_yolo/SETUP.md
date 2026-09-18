@@ -259,16 +259,10 @@ onnxruntime, all of which ship wheels for both.
 `python3 -m venv venv` then the same commands. On Apple Silicon, onnxruntime
 runs on CPU fine; there is no CUDA, so ignore section 6.
 
-**Windows:** skip the `apt` step. The venv paths differ:
-
-```
-python -m venv venv
-venv\Scripts\pip install -r requirements.txt
-venv\Scripts\python run.py --source 0 ...
-```
-
-`setup.sh` is bash, so run those four commands by hand or use WSL. Under WSL a
-webcam needs USB passthrough, so prefer video files there.
+**Windows:** see [SETUP_WINDOWS.md](SETUP_WINDOWS.md) — a full step-by-step
+guide written for someone with no Python experience, with `setup.bat` as the
+equivalent of `setup.sh`. Under WSL a webcam needs USB passthrough, so prefer
+video files there.
 
 ---
 

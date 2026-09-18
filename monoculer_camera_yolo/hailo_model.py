@@ -18,6 +18,8 @@ normalisation that `onnx_model.py` does by hand is compiled into the graph.
 Dividing by 255 here would quietly halve every activation.
 """
 
+import os
+
 import numpy as np
 
 try:                                   # only present on a Hailo-equipped machine
@@ -173,5 +175,5 @@ class HailoDetectionModel:
     def describe(self):
         return (f"hailo {self.in_w}x{self.in_h} "
                 f"{'letterbox' if self.letterbox else 'stretch'} "
-                f"{self.hef_path.split('/')[-1]}"
+                f"{os.path.basename(self.hef_path)}"
                 + (f", classes={self.classes}" if self.classes else ""))
