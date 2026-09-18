@@ -21,6 +21,7 @@ models/
 testdata/
 outputs/
 captures/
+camera_snapshots/
 *.mp4
 *.MOV
 *.mov

@@ -220,6 +220,17 @@ window opens showing your webcam with a telemetry readout in the corner.
 **Press `q` to quit.** Closing the window with the X can leave the program
 running; `q` is cleaner.
 
+> **Which camera is `0`?** If your PC has more than one (a built-in webcam and
+> a USB one, say), run this first:
+>
+> ```
+> venv\Scripts\python.exe run.py --list-cameras
+> ```
+>
+> It lists every camera with its resolution and name, and saves one photo from
+> each into `camera_snapshots\`. Open those images, see which is which, and use
+> that number as `--source`.
+
 > **If Windows asks for camera permission, allow it.** If no window appears and
 > you get a camera error, go to Settings → Privacy & security → Camera, and turn
 > on both **Camera access** and **Let desktop apps access your camera**. This is
@@ -334,7 +345,8 @@ firewall is blocking it — re-run and allow, or add an inbound rule for that po
 | `error: No Roboflow API key` | Key not set, or you are in an old window | `setx ROBOFLOW_API_KEY "..."` then **open a new Command Prompt** |
 | `... is not cached ... has to be downloaded` | Same as above, or no internet | As above; the model needs one download |
 | `cannot open source '0'` | No camera, or Windows is blocking it | Settings → Privacy & security → Camera → allow desktop apps. Or try `--source 1` |
-| Camera window is black, no error | Another app is using the camera | Close Teams, Zoom, Skype, the Camera app |
+| Camera window is black, no error | Another app is using the camera, or the privacy shutter is closed | Close Teams, Zoom, Skype, the Camera app. Run `--list-cameras`; it flags a near-black feed |
+| Wrong camera opens | You have more than one | `--list-cameras`, look at the snapshots, use the right number |
 | Saved video plays black | ffmpeg not installed | Step 8 |
 | `Windows protected your PC` on setup.bat | Normal for new scripts | **More info** → **Run anyway** |
 | `running scripts is disabled on this system` | PowerShell blocking activation | Use `venv\Scripts\python.exe` directly as this guide does; do not activate |
@@ -379,6 +391,7 @@ cd /d C:\drone\depth_estimation\monoculer_camera_yolo
 | One image | `--source photo.jpg` |
 | A folder of images | `--source images\ --save out\` |
 | Watch from a phone | add `--web-port 8000 --no-display`, then browse to `http://<this-pc-ip>:8000/` |
+| Which camera is which? | `venv\Scripts\python.exe run.py --list-cameras` |
 | See all options | `venv\Scripts\python.exe run.py --help` |
 | Check it still works | `venv\Scripts\python.exe selftest.py` |
 

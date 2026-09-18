@@ -6,7 +6,10 @@ a live camera has no media clock, and a single image has neither.
 """
 
 import glob
+import os
 import queue
+import subprocess
+import sys
 import threading
 from pathlib import Path
 
@@ -15,6 +18,99 @@ import cv2 as cv
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
 _GLOB_CHARS = "*?["
 CAMERA_STALL_TIMEOUT_S = 8.0
+
+
+def _os_camera_names():
+    """Human-readable device names, where the OS will tell us.
+
+    OpenCV has no API for this: an index is all it offers. So ask the platform
+    directly — v4l2 on Linux, PnP on Windows. Best effort; an empty result just
+    means the listing falls back to resolution and a snapshot to tell cameras
+    apart.
+    """
+    names = {}
+    if sys.platform.startswith("linux"):
+        for path in sorted(glob.glob("/sys/class/video4linux/video*")):
+            try:
+                idx = int(os.path.basename(path).replace("video", ""))
+                with open(os.path.join(path, "name")) as fh:
+                    names[idx] = fh.read().strip()
+            except (OSError, ValueError):
+                continue
+    elif os.name == "nt":
+        try:
+            out = subprocess.run(
+                ["powershell", "-NoProfile", "-Command",
+                 "Get-CimInstance Win32_PnPEntity | "
+                 "Where-Object { $_.PNPClass -eq 'Camera' -or $_.PNPClass -eq 'Image' } | "
+                 "Select-Object -ExpandProperty Name"],
+                capture_output=True, text=True, timeout=20,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
+            # Windows does not expose which PnP device maps to which OpenCV
+            # index, so these are listed in order as a hint, not a mapping.
+            for i, line in enumerate(x for x in out.splitlines() if x.strip()):
+                names[i] = line.strip()
+        except (subprocess.SubprocessError, OSError, FileNotFoundError):
+            pass
+    return names
+
+
+def list_cameras(max_index=8, snapshot_dir=None):
+    """Probe camera indices and describe what is on each.
+
+    Returns a list of dicts. If `snapshot_dir` is given, one frame from each
+    working camera is saved there — with two identical-looking webcams that
+    picture is usually the only way to tell which is which.
+    """
+    names = _os_camera_names()
+    found = []
+    # Probing an index that does not exist makes OpenCV print a multi-line C++
+    # error for every miss, which buries the actual listing. Silence it for the
+    # duration of the scan only.
+    prev_log = None
+    try:
+        prev_log = cv.utils.logging.getLogLevel()
+        cv.utils.logging.setLogLevel(cv.utils.logging.LOG_LEVEL_SILENT)
+    except AttributeError:
+        pass
+
+    for idx in range(max_index + 1):
+        cap = cv.VideoCapture(idx)
+        if not cap.isOpened():
+            cap.release()
+            continue
+        info = {
+            "index": idx,
+            "name": names.get(idx, ""),
+            "width": int(cap.get(cv.CAP_PROP_FRAME_WIDTH)),
+            "height": int(cap.get(cv.CAP_PROP_FRAME_HEIGHT)),
+            "fps": round(cap.get(cv.CAP_PROP_FPS) or 0, 1),
+            "backend": cap.getBackendName() if hasattr(cap, "getBackendName") else "",
+            "readable": False,
+            "brightness": None,
+            "snapshot": None,
+        }
+        ok, frame = cap.read()
+        if ok and frame is not None:
+            info["readable"] = True
+            info["height"], info["width"] = frame.shape[:2]
+            # A lens cap, a privacy shutter or a disconnected sensor still opens
+            # and still reads: it just returns near-black. Worth flagging.
+            info["brightness"] = round(float(frame.mean()), 1)
+            if snapshot_dir:
+                os.makedirs(snapshot_dir, exist_ok=True)
+                path = os.path.join(snapshot_dir, f"camera_{idx}.jpg")
+                cv.imwrite(path, frame)
+                info["snapshot"] = path
+        cap.release()
+        found.append(info)
+
+    if prev_log is not None:
+        try:
+            cv.utils.logging.setLogLevel(prev_log)
+        except AttributeError:
+            pass
+    return found
 
 
 class FrameSource:

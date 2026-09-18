@@ -109,6 +109,7 @@ command with `QT_QPA_PLATFORM=xcb`.
 | flag | what it does |
 |---|---|
 | `--source` | camera index, video path, stream URL, image path, folder, or glob |
+| `--list-cameras` | probe every camera on this machine and save a snapshot from each, so you can tell which index is which |
 | `--model-id` | `drone-detection-rchy7/8` is the full-dataset model (mAP 75.9). `run.py --list-versions` prints them all |
 | `--keep-classes 1` | version 8 has 3 classes and only index 1 is the drone; without this you get birds and dataset noise. **The indices differ per version** — see below |
 | `--class-names` | names for the indices, purely cosmetic: `'bird,drone,flock of birds'` for version 8 |

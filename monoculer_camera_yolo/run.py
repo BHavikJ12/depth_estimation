@@ -26,7 +26,7 @@ from detector import DEFAULT_MODEL_ID, DroneDetector, list_versions
 from overlay import annotate, status_lines
 from ranging import (DEFAULT_SIZE_CV, DEFAULT_TARGET_SIZE_M, SPAN_MODES,
                      RangeEstimator, solve_target_size)
-from sources import FrameSource
+from sources import FrameSource, list_cameras
 from tracker import DroneTracker
 from video_writer import AnnotatedVideoWriter
 
@@ -87,6 +87,10 @@ def main(argv=None):
     src.add_argument("--source", default="0",
                      help="webcam index (0, 1, ...), video file, stream URL, "
                           "image file, or a folder/glob of images (default: 0)")
+    src.add_argument("--list-cameras", action="store_true",
+                     help="probe the camera indices on this machine, say what is "
+                          "on each, and save a snapshot from every one so you can "
+                          "tell them apart; then exit")
     src.add_argument("--step", action="store_true",
                      help="wait for a keypress between frames (a single image "
                           "always waits)")
@@ -166,6 +170,44 @@ def main(argv=None):
                           "same network (0 = disabled)")
 
     args = p.parse_args(argv)
+
+    if args.list_cameras:
+        snap_dir = "camera_snapshots"
+        cams = list_cameras(snapshot_dir=snap_dir)
+        if not cams:
+            print("No cameras found.")
+            print("  - Windows: Settings > Privacy & security > Camera, and "
+                  "allow desktop apps")
+            print("  - close anything else using the camera (Teams, Zoom, the "
+                  "Camera app)")
+            print("  - Linux: check `ls /dev/video*` and that you are in the "
+                  "'video' group")
+            return 1
+
+        print(f"Found {len(cams)} camera(s):\n")
+        for c in cams:
+            title = f"  --source {c['index']}"
+            if c["name"]:
+                title += f"   {c['name']}"
+            print(title)
+            if not c["readable"]:
+                print("      opens but returns no frame — another program may "
+                      "be using it")
+                print()
+                continue
+            print(f"      {c['width']}x{c['height']}  "
+                  f"{c['fps'] or '?'} fps  via {c['backend'] or '?'}")
+            note = ""
+            if c["brightness"] is not None and c["brightness"] < 8:
+                note = "   (nearly black — lens cap or privacy shutter?)"
+            print(f"      average brightness {c['brightness']}{note}")
+            if c["snapshot"]:
+                print(f"      snapshot: {c['snapshot']}")
+            print()
+
+        print(f"Open the images in {snap_dir}/ to see which camera is which, "
+              "then pass that number as --source.")
+        return 0
 
     if args.list_versions:
         info = list_versions(args.api_key)
